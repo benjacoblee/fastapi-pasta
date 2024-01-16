@@ -1,5 +1,5 @@
 import os
-from typing import Annotated
+from typing import Annotated, Union
 from fastapi import Depends, FastAPI, HTTPException, status, Query
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy import (
@@ -22,10 +22,12 @@ from sqlalchemy.orm import (
 )
 from enum import Enum as PyEnum
 from pydantic import BaseModel
+from pydantic.functional_validators import AfterValidator
 from datetime import datetime, timedelta
 from jose import JWTError, jwt, ExpiredSignatureError
 from passlib.context import CryptContext
 from dotenv import load_dotenv
+from validators import is_at_least_8_chars, has_uppercase, has_lowercase, has_one_digit
 
 load_dotenv()
 
@@ -48,9 +50,13 @@ class TokenData(BaseModel):
     username: str | None = None
 
 
-class StatusMsg(BaseModel):
-    status: int
-    message: str
+class StatusDetail(BaseModel):
+    status_code: int
+    detail: str
+
+    def __init__(self, status_code: int, detail=""):
+        self.status_code = status_code
+        self.detail = detail
 
 
 class User(BaseModel):
@@ -142,6 +148,10 @@ def verify_password(plain_password, hashed_password):
 
 def get_password_hash(password):
     return password_context.hash(password)
+
+
+def list_characteristics():
+    return [v.value for v in list(Characteristics)]
 
 
 async def get_user(username: str, db: Session):
@@ -237,10 +247,25 @@ async def read_user_items(user_id: int, db: Session = Depends(get_db)):
     return db_items
 
 
-@app.post("/register", response_model=User)
+@app.post("/register", response_model=Union[User, StatusDetail])
 async def register_user(
     username: Annotated[str, Query(min_length=6)],
-    password: Annotated[str, Query(min_length=6)],
+    password: Annotated[
+        str,
+        AfterValidator(is_at_least_8_chars),
+        AfterValidator(has_uppercase),
+        AfterValidator(has_lowercase),
+        AfterValidator(has_one_digit),
+        Query(
+            min_length=8,
+            description="""
+- Needs to be 8 characters in length
+- Needs to have an uppercase character
+- Needs to have a lowercase character
+- Needs to have a digit
+""",
+        ),
+    ],
     db: Session = Depends(get_db),
 ):
     user = await get_user(username, db)
@@ -251,33 +276,39 @@ async def register_user(
     db.add(db_item)
     db.commit()
     db.refresh(db_item)
-    return await get_user(username, db)
+    return StatusDetail(200, detail="User creation successful")
 
 
-@app.post("/routes", response_model=StatusMsg)
+@app.post("/routes", response_model=StatusDetail)
 async def create_route(
     route: Route,
-    current_user: UserHash = Depends(get_current_active_user),
+    current_user: UserItem = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
     try:
-        characteristics = [val.value for val in route.characteristics]
         route_dict = {
             key: value
             for key, value in route.__dict__.items()
             if key != "characteristics"
         }
         route_item = RouteItem(
-            **route_dict, user_id=current_user.id, characteristics=characteristics
+            **route_dict,
+            user_id=current_user.id,
+            characteristics=list_characteristics()
         )
         db.add(route_item)
         db.commit()
         db.refresh(route_item)
-        return StatusMsg(status=status.HTTP_200_OK, message="Success")
+        return StatusDetail(status.HTTP_200_OK, detail="Success")
     except HTTPException as http_exc:
         raise http_exc
     except Exception as exc:
-        return StatusMsg(
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            message="Internal server error",
+        return StatusDetail(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error",
         )
+
+
+@app.get("/routes/characteristics", response_model=list[Characteristics])
+async def get_characteristics():
+    return list_characteristics()
