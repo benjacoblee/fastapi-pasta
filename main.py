@@ -22,6 +22,7 @@ from models.base import Token, StatusDetail, User, Characteristic, Route
 from models.db import Base, UserItem, RouteItem, CharacteristicItem
 from validators import is_at_least_8_chars, has_uppercase, has_lowercase, has_one_digit
 from constants import PASSWORD_REQUIREMENTS, ACCESS_TOKEN_EXP_MINUTES
+from utils.characteristics import get_new_characteristics, to_characteristics_list
 
 
 app = FastAPI()
@@ -86,6 +87,7 @@ async def register_user(
     ],
     db: Session = Depends(get_db),
 ):
+    # linter will sometimes complain that this is not awaitable, but it returns a coroutine object that must be awaited
     user = await get_user(username, db)
     if user:
         raise HTTPException(400, detail="Username already taken")
@@ -108,24 +110,17 @@ async def create_route(
         # route_characteristics_names has to be an array of strings for the filter to work
         # filter will not work with route.characteristics, which is Characteristic class
         # don't change the type of Characteristic, because it is needed in read_own_items
-        route_characteristics_names = [c.name for c in route.characteristics]
-        existing_characteristics = (
-            db.query(CharacteristicItem)
-            .filter(CharacteristicItem.name.in_(route_characteristics_names))
-            .all()
-        )
-        existing_names = {c.name for c in existing_characteristics}
-        new_characteristics = [
-            CharacteristicItem(name=c)
-            for c in route_characteristics_names
-            if c not in existing_names
-        ]
+        new_characteristics = get_new_characteristics(route.characteristics, db)
         db.add_all(new_characteristics)
         db.commit()
         # re-query is needed because the characteristics might not exist before this point in time
         route_characteristics = (
             db.query(CharacteristicItem)
-            .filter(CharacteristicItem.name.in_(route_characteristics_names))
+            .filter(
+                CharacteristicItem.name.in_(
+                    to_characteristics_list(route.characteristics)
+                )
+            )
             .all()
         )
         route_dict = {
@@ -134,10 +129,8 @@ async def create_route(
             if key != "characteristics"
         }
         route_item = RouteItem(
-            **route_dict,
-            user_id=current_user.id,
+            **route_dict, user_id=current_user.id, characteristics=route_characteristics
         )
-        route_item.characteristics = route_characteristics
         db.add(route_item)
         db.commit()
         db.refresh(route_item)
@@ -149,6 +142,72 @@ async def create_route(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error",
         )
+
+
+@app.get("/routes", response_model=list[Route])
+async def list_routes(db=Depends(get_db)):
+    return db.query(RouteItem).all()
+
+
+@app.delete("/routes/{route_id}")
+async def delete_route_by_id(
+    route_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    route = db.query(RouteItem).filter(RouteItem.id == route_id).first()
+    if not route:
+        return StatusDetail(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Route not found"
+        )
+    user = db.query(UserItem).filter(UserItem.id == current_user.id).first()
+    unauthorized_detail = StatusDetail(
+        status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized"
+    )
+    if not user:
+        return unauthorized_detail
+    if route.user_id != user.id:
+        return unauthorized_detail
+    db.delete(route)
+    db.commit()
+    return StatusDetail(status_code=200, detail=f"Route {route_id} deleted")
+
+
+@app.put("/routes/{route_id}", response_model=StatusDetail)
+async def edit_route_by_id(
+    route: Route,
+    route_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    to_update = db.query(RouteItem).filter(RouteItem.id == route_id).first()
+    if not to_update:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Bad request"
+        )
+    if to_update.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized"
+        )
+    for attr_name, new_val in route.__dict__.items():
+        if attr_name in to_update.__dict__:
+            setattr(to_update, attr_name, new_val)
+        elif attr_name == "characteristics":
+            new_characteristics = get_new_characteristics(route.characteristics, db)
+            db.add_all(new_characteristics)
+            db.commit()
+            route_characteristics = (
+                db.query(CharacteristicItem)
+                .filter(
+                    CharacteristicItem.name.in_(
+                        to_characteristics_list(route.characteristics)
+                    )
+                )
+                .all()
+            )
+            to_update.characteristics = route_characteristics
+    db.commit()
+    return StatusDetail(status_code=200, detail="Success")
 
 
 @app.get("/routes/{characteristic}/", response_model=list[Route])
@@ -163,6 +222,21 @@ async def get_routes_by_characteristic(
         .all()
     )
     return db_items
+
+
+@app.post("/characteristics", response_model=StatusDetail)
+async def create_characteristic(
+    name: str,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    if not current_user:
+        return StatusDetail(status_code=403, detail="Unauthorized")
+    characteristic_item = CharacteristicItem(name=name)
+    db.add(characteristic_item)
+    db.commit()
+    db.refresh(characteristic_item)
+    return StatusDetail(status_code=200, detail="Success")
 
 
 @app.get("/characteristics", response_model=list[Characteristic])
