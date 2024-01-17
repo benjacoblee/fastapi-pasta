@@ -60,4 +60,8 @@ class CharacteristicItem(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(30))
-    routes = relationship("RouteItem", secondary=route_characteristic_association)
+    routes = relationship(
+        "RouteItem",
+        secondary=route_characteristic_association,
+        overlaps="characteristics",
+    )
