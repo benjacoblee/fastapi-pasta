@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "fastapi-auth-bouldering"
+version = "0.1.0"
+description = ""
+authors = ["benjacoblee <benjacoblee@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.scripts]
+start = "app:main"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+sqlalchemy = "2.0.25"
+fastapi = "0.109.0"
+uvicorn = "0.25.0"
+python-multipart = "0.0.6"
+python-jose = { version = "3.3.0", extras = ["cryptography"] }
+passlib = { version = "1.7.4", extras = ["bcrypt"] }
+python-dotenv = "1.0.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
