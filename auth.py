@@ -8,15 +8,12 @@ from passlib.context import CryptContext
 from db import get_db
 from models.base import UserHash
 from models.db import UserItem
-
-
-SECRET_KEY = os.getenv("SECRET_KEY") or ""
+from constants import SECRET_KEY, ALGORITHM
 
 
 if not SECRET_KEY:
     raise Exception("Secret key missing")
 
-ALGORITHM = os.getenv("ALGORITHM") or "HS256"
 
 password_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth_2_scheme = OAuth2PasswordBearer(tokenUrl="token")
