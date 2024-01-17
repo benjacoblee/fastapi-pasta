@@ -1,208 +1,35 @@
-import os
-from typing import Annotated, Union
-from fastapi import Depends, FastAPI, HTTPException, status, Query
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from sqlalchemy import (
-    create_engine,
-    String,
-    ForeignKey,
-    Date,
-    Integer,
-    Text,
-    Boolean,
-    JSON,
-)
-from sqlalchemy.orm import (
-    sessionmaker,
-    Session,
-    DeclarativeBase,
-    Mapped,
-    mapped_column,
-    relationship,
-)
-from enum import Enum as PyEnum
-from pydantic import BaseModel
-from pydantic.functional_validators import AfterValidator
-from datetime import datetime, timedelta
-from jose import JWTError, jwt, ExpiredSignatureError
-from passlib.context import CryptContext
 from dotenv import load_dotenv
-from validators import is_at_least_8_chars, has_uppercase, has_lowercase, has_one_digit
 
 load_dotenv()
 
-SECRET_KEY = os.getenv("SECRET_KEY") or ""
+from typing import Annotated, Union
+from fastapi import Depends, FastAPI, HTTPException, status, Query
+from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy.orm import (
+    Session,
+)
+from pydantic.functional_validators import AfterValidator
+from datetime import timedelta
+from db import engine, get_db
+from auth import (
+    get_current_active_user,
+    auth_user,
+    create_access_token,
+    get_user,
+    get_password_hash,
+)
+from models.base import Token, StatusDetail, User, Characteristic, Route
+from models.db import Base, UserItem, RouteItem, CharacteristicItem
+from validators import is_at_least_8_chars, has_uppercase, has_lowercase, has_one_digit
+from constants import PASSWORD_REQUIREMENTS, ACCESS_TOKEN_EXP_MINUTES
 
-if not SECRET_KEY:
-    raise Exception("Secret key missing")
-
-ALGORITHM = os.getenv("ALGORITHM") or "HS256"
-ACCESS_TOKEN_EXP_MINUTES = os.getenv("ACCESS_TOKEN_EXP_MINUTES") or 30
-DATABASE_URL = "sqlite:///test.db"
-
-
-class Token(BaseModel):
-    access_token: str
-    token_type: str
-
-
-class StatusDetail(BaseModel):
-    status_code: int
-    detail: str
-
-    def __init__(self, status_code: int, detail=""):
-        self.status_code = status_code
-        self.detail = detail
-
-
-class User(BaseModel):
-    id: int
-    username: str
-
-
-class UserHash(User):
-    id: int
-    hashed_password: str
-
-
-class Base(DeclarativeBase):
-    pass
-
-
-class Characteristics(PyEnum):
-    JUG = "jug"
-    SLOPER = "sloper"
-    CRIMP = "crimp"
-    PINCH = "pinch"
-    POCKET = "pocket"
-    UNDERCLING = "undercling"
-    DYNO = "dyno"
-    STATIC = "static"
-    DYNAMIC = "dynamic"
-    SLAB = "slab"
-    OVERHANG = "overhang"
-
-
-class Route(BaseModel):
-    gym_name: str
-    date: datetime
-    difficulty: str
-    characteristics: list[Characteristics]
-    attempts: int
-    sent: bool
-    notes: str
-
-
-class UserItem(Base):
-    __tablename__ = "users"
-
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    username: Mapped[str] = mapped_column(String(30))
-    hashed_password: Mapped[str] = mapped_column(String(30))
-    routes: Mapped[list["RouteItem"]] = relationship(back_populates="user")
-
-
-class RouteItem(Base):
-    __tablename__ = "routes"
-
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
-    user: Mapped["UserItem"] = relationship(back_populates="routes")
-    gym_name: Mapped[str] = mapped_column(String(30))
-    date: Mapped[datetime] = mapped_column(Date)
-    difficulty: Mapped[str] = mapped_column(String(30))
-    characteristics: Mapped[list[Characteristics]] = mapped_column(JSON)
-    attempts: Mapped[int] = mapped_column(Integer)
-    sent: Mapped[bool] = mapped_column(Boolean)
-    notes: Mapped[str] = mapped_column(Text)
-
-
-password_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-oauth_2_scheme = OAuth2PasswordBearer(tokenUrl="token")
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 app = FastAPI()
-
-
-def get_db():
-    database = SessionLocal()
-    try:
-        yield database
-    finally:
-        database.close()
 
 
 @app.on_event("startup")
 async def startup():
     Base.metadata.create_all(bind=engine)
-
-
-def verify_password(plain_password, hashed_password):
-    return password_context.verify(plain_password, hashed_password)
-
-
-def get_password_hash(password):
-    return password_context.hash(password)
-
-
-def list_characteristics():
-    return [v.value for v in list(Characteristics)]
-
-
-async def get_user(username: str, db: Session):
-    db_item = db.query(UserItem).filter(UserItem.username == username).first()
-    if db_item:
-        return UserHash(**db_item.__dict__)
-
-
-async def auth_user(username: str, password: str, db: Session):
-    user = await get_user(username, db)
-    if not user:
-        return False
-    if not verify_password(password, user.hashed_password):
-        return False
-
-    return user
-
-
-def create_access_token(data: dict, expires_delta: timedelta | None = None):
-    to_encode = data.copy()
-    expire = (
-        datetime.utcnow() + expires_delta
-        if expires_delta
-        else datetime.utcnow() + timedelta(minutes=15)
-    )
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
-
-
-async def get_current_user(
-    token: str = Depends(oauth_2_scheme), db: Session = Depends(get_db)
-):
-    credential_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username = payload.get("sub")
-        if username is None:
-            raise credential_exception
-        user = await get_user(username, db)
-        return user
-    except ExpiredSignatureError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has expired"
-        )
-    except JWTError:
-        raise credential_exception
-
-
-async def get_current_active_user(current_user: UserHash = Depends(get_current_user)):
-    return current_user
 
 
 @app.post("/token", response_model=Token)
@@ -254,12 +81,7 @@ async def register_user(
         AfterValidator(has_one_digit),
         Query(
             min_length=8,
-            description="""
-- Needs to be 8 characters in length
-- Needs to have an uppercase character
-- Needs to have a lowercase character
-- Needs to have a digit
-""",
+            description=PASSWORD_REQUIREMENTS,
         ),
     ],
     db: Session = Depends(get_db),
@@ -272,7 +94,7 @@ async def register_user(
     db.add(db_item)
     db.commit()
     db.refresh(db_item)
-    return StatusDetail(200, detail="User creation successful")
+    return StatusDetail(status_code=200, detail="User creation successful")
 
 
 @app.post("/routes", response_model=StatusDetail)
@@ -282,6 +104,30 @@ async def create_route(
     db: Session = Depends(get_db),
 ):
     try:
+        # we convert Characteristic objects to an array of strings
+        # route_characteristics_names has to be an array of strings for the filter to work
+        # filter will not work with route.characteristics, which is Characteristic class
+        # don't change the type of Characteristic, because it is needed in read_own_items
+        route_characteristics_names = [c.name for c in route.characteristics]
+        existing_characteristics = (
+            db.query(CharacteristicItem)
+            .filter(CharacteristicItem.name.in_(route_characteristics_names))
+            .all()
+        )
+        existing_names = {c.name for c in existing_characteristics}
+        new_characteristics = [
+            CharacteristicItem(name=c)
+            for c in route_characteristics_names
+            if c not in existing_names
+        ]
+        db.add_all(new_characteristics)
+        db.commit()
+        # re-query is needed because the characteristics might not exist before this point in time
+        route_characteristics = (
+            db.query(CharacteristicItem)
+            .filter(CharacteristicItem.name.in_(route_characteristics_names))
+            .all()
+        )
         route_dict = {
             key: value
             for key, value in route.__dict__.items()
@@ -290,21 +136,35 @@ async def create_route(
         route_item = RouteItem(
             **route_dict,
             user_id=current_user.id,
-            characteristics=list_characteristics()
         )
+        route_item.characteristics = route_characteristics
         db.add(route_item)
         db.commit()
         db.refresh(route_item)
-        return StatusDetail(status.HTTP_200_OK, detail="Success")
+        return StatusDetail(status_code=status.HTTP_200_OK, detail="Success")
     except HTTPException as http_exc:
         raise http_exc
-    except Exception as exc:
+    except Exception:
         return StatusDetail(
-            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error",
         )
 
 
-@app.get("/routes/characteristics", response_model=list[Characteristics])
-async def get_characteristics():
-    return list_characteristics()
+@app.get("/routes/{characteristic}/", response_model=list[Route])
+async def get_routes_by_characteristic(
+    characteristic: str, db: Session = Depends(get_db)
+):
+    db_items = (
+        db.query(RouteItem)
+        .filter(
+            RouteItem.characteristics.any(CharacteristicItem.name == characteristic)
+        )
+        .all()
+    )
+    return db_items
+
+
+@app.get("/characteristics", response_model=list[Characteristic])
+async def get_characteristics(db=Depends(get_db)):
+    return db.query(CharacteristicItem).all()
