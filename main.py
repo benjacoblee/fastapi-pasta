@@ -161,13 +161,10 @@ async def delete_route_by_id(
             status_code=status.HTTP_404_NOT_FOUND, detail="Route not found"
         )
     user = db.query(UserItem).filter(UserItem.id == current_user.id).first()
-    unauthorized_detail = StatusDetail(
-        status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized"
-    )
-    if not user:
-        return unauthorized_detail
-    if route.user_id != user.id:
-        return unauthorized_detail
+    if user and route.user_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized"
+        )
     db.delete(route)
     db.commit()
     return StatusDetail(status_code=200, detail=f"Route {route_id} deleted")
@@ -210,28 +207,35 @@ async def edit_route_by_id(
     return StatusDetail(status_code=200, detail="Success")
 
 
-@app.get("/routes/{characteristic}/", response_model=list[Route])
+@app.get("/routes/{characteristic}", response_model=list[Route])
 async def get_routes_by_characteristic(
     characteristic: str, db: Session = Depends(get_db)
 ):
-    db_items = (
+    return (
         db.query(RouteItem)
         .filter(
             RouteItem.characteristics.any(CharacteristicItem.name == characteristic)
         )
         .all()
     )
-    return db_items
 
 
 @app.post("/characteristics", response_model=StatusDetail)
 async def create_characteristic(
     name: str,
-    current_user: User = Depends(get_current_active_user),
+    _: User = Depends(
+        get_current_active_user
+    ),  # we don't use the variable but user needs to be logged in to create a characteristic
     db: Session = Depends(get_db),
 ):
-    if not current_user:
-        return StatusDetail(status_code=403, detail="Unauthorized")
+    exists = (
+        db.query(CharacteristicItem).filter(CharacteristicItem.name == name).first()
+    )
+    if exists:
+        return StatusDetail(
+            status_code=status.HTTP_204_NO_CONTENT,
+            detail="Item already exists",
+        )
     characteristic_item = CharacteristicItem(name=name)
     db.add(characteristic_item)
     db.commit()
