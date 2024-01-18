@@ -6,7 +6,24 @@ from main import app, get_db, Base
 from models.db import UserItem
 
 DATABASE_URL = "sqlite:///:memory:"
+TEST_PASSWORD = os.getenv("TEST_PASSWORD")
+HASHED_PASSWORD = os.getenv("TEST_HASH_PASSWORD")
+
 USERNAME = "username"
+BEARER = "bearer"
+ACCESS_TOKEN = "access_token"
+TOKEN_TYPE = "token_type"
+DETAIL = "detail"
+TEST_ROUTE = {
+    "gym_name": "test_gym",
+    "date": "2024-01-18T00:00:00",
+    "difficulty": "string",
+    "characteristics": [{"name": "dyno"}],
+    "attempts": 0,
+    "sent": True,
+    "notes": "string",
+}
+
 
 engine = create_engine(
     DATABASE_URL, connect_args={"check_same_thread": False}, poolclass=StaticPool
@@ -16,7 +33,7 @@ TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engin
 client = TestClient(app)
 
 
-def override():
+def override_get_db():
     db = TestingSessionLocal()
     try:
         yield db
@@ -27,10 +44,7 @@ def override():
 def setup():
     Base.metadata.create_all(bind=engine)
     session = TestingSessionLocal()
-    user = UserItem(
-        username=USERNAME,
-        hashed_password=os.getenv("TEST_HASH_PASSWORD"),
-    )
+    user = UserItem(username=USERNAME, hashed_password=HASHED_PASSWORD)
     session.add(user)
     session.commit()
 
@@ -39,7 +53,7 @@ def teardown():
     Base.metadata.drop_all(bind=engine)
 
 
-app.dependency_overrides[get_db] = override
+app.dependency_overrides[get_db] = override_get_db
 
 
 def test_get_root():
@@ -48,37 +62,41 @@ def test_get_root():
 
 
 def post_token_res():
-    test_pw = os.getenv("TEST_PASSWORD")
-    if not test_pw:
+    if not TEST_PASSWORD:
         raise ValueError("Password not provided")
-    res = client.post("/token", data={"username": USERNAME, "password": test_pw})
+    res = client.post("/token", data={"username": USERNAME, "password": TEST_PASSWORD})
     return res
+
+
+def get_token(res):
+    res_json = res.json()
+    return res_json[ACCESS_TOKEN]
+
+
+def construct_headers(token: str):
+    return {"Authorization": f"Bearer {token}"}
 
 
 def test_post_token():
     res = post_token_res()
     assert res.status_code == 200
     res_json = res.json()
-    assert len(res_json["access_token"])
-    assert res_json["token_type"] == "bearer"
+    assert len(res_json[ACCESS_TOKEN])
+    assert res_json[TOKEN_TYPE] == BEARER
 
 
 def test_get_me():
     token_res = post_token_res()
-    res_json = token_res.json()
-    access_token = res_json["access_token"]
-    res = client.get("/users/me", headers={"Authorization": f"Bearer {access_token}"})
+    token = get_token(token_res)
+    res = client.get("/users/me", headers=construct_headers(token))
     assert res.status_code == 200
     assert res.json() == {"id": 1, "username": USERNAME}
 
 
 def test_get_own_items():
     token_res = post_token_res()
-    res_json = token_res.json()
-    access_token = res_json["access_token"]
-    res = client.get(
-        "/users/me/items", headers={"Authorization": f"Bearer {access_token}"}
-    )
+    token = get_token(token_res)
+    res = client.get("/users/me/items", headers=construct_headers(token))
     assert res.status_code == 200
     assert len(res.json()) == 0
 
@@ -117,36 +135,14 @@ def test_post_routes_unauthorized():
 
 def test_post_routes_authorized():
     token_res = post_token_res()
-    res_json = token_res.json()
-    access_token = res_json["access_token"]
-    post_json = {
-        "gym_name": "test_gym",
-        "date": "2024-01-18T00:00:00",
-        "difficulty": "string",
-        "characteristics": [{"name": "dyno"}],
-        "attempts": 0,
-        "sent": True,
-        "notes": "string",
-    }
-    res = client.post(
-        "/routes", headers={"Authorization": f"Bearer {access_token}"}, json=post_json
-    )
+    token = get_token(token_res)
+    res = client.post("/routes", headers=construct_headers(token), json=TEST_ROUTE)
     assert res.json() == {"status_code": 200, "detail": "Success"}
 
 
 def test_get_routes_by_characteristic():
     res = client.get("/routes/dyno")
-    assert res.json() == [
-        {
-            "gym_name": "test_gym",
-            "date": "2024-01-18T00:00:00",
-            "difficulty": "string",
-            "characteristics": [{"name": "dyno"}],
-            "attempts": 0,
-            "sent": True,
-            "notes": "string",
-        }
-    ]
+    assert res.json() == [TEST_ROUTE]
 
 
 def test_get_routes():
@@ -158,11 +154,8 @@ def test_get_routes():
 
 def test_delete_route():
     token_res = post_token_res()
-    res_json = token_res.json()
-    access_token = res_json["access_token"]
-    res = client.delete(
-        "/routes/1",
-        headers={"Authorization": f"Bearer {access_token}"},
-    )
+    token = get_token(token_res)
+    res = client.delete("/routes/1", headers=construct_headers(token))
+    res_json = res.json()
     assert res.status_code == 200
-    assert res.json()["detail"] == "Route 1 deleted"
+    assert res_json[DETAIL] == "Route 1 deleted"
