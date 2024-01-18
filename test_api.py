@@ -92,7 +92,7 @@ def test_register_invalid_body():
     assert res.status_code == 422
 
 
-def test_register_valid_body_invalid_pw():
+def test_register_valid_username_invalid_pw():
     username = "123456"
     password = "12345678"
     res = client.post(
