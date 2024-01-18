@@ -33,6 +33,11 @@ async def startup():
     Base.metadata.create_all(bind=engine)
 
 
+@app.get("/")
+async def get_root():
+    return StatusDetail(status_code=200, detail="OK")
+
+
 @app.post("/token", response_model=Token)
 async def login_for_access_token(
     form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)
