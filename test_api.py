@@ -18,11 +18,12 @@ TEST_ROUTE = {
     "gym_name": "test_gym",
     "date": "2024-01-18T00:00:00",
     "difficulty": "string",
-    "characteristics": [{"name": "dyno"}],
+    "characteristics": ["dyno"],
     "attempts": 0,
     "sent": True,
     "notes": "string",
 }
+CHANGED_GYM_NAME = "changed_test_gym"
 
 
 engine = create_engine(
@@ -136,13 +137,50 @@ def test_post_routes_unauthorized():
 def test_post_routes_authorized():
     token_res = post_token_res()
     token = get_token(token_res)
-    res = client.post("/routes", headers=construct_headers(token), json=TEST_ROUTE)
+    res = client.post(
+        "/routes",
+        headers=construct_headers(token),
+        data=TEST_ROUTE,
+        files={"upload_file": open("videos/Untitled.jpeg", "rb")},
+    )
     assert res.json() == {"status_code": 200, "detail": "Success"}
+
+
+def test_put_routes_authorized():
+    token_res = post_token_res()
+    token = get_token(token_res)
+    res = client.put(
+        "/routes/1",
+        headers=construct_headers(token),
+        data={
+            **TEST_ROUTE,
+            "gym_name": CHANGED_GYM_NAME,
+        },
+    )
+    assert res.json() == {"status_code": 200, "detail": "Success"}
+
+
+def test_stream_video_with_valid_id():
+    res = client.get("/routes/1/video")
+    assert res.status_code == 200
+
+
+def test_stream_video_with_invalid_id():
+    res = client.get("/routes/2/video")
+    assert res.status_code == 400
 
 
 def test_get_routes_by_characteristic():
     res = client.get("/routes/dyno")
-    assert res.json() == [TEST_ROUTE]
+    test_route = {
+        **TEST_ROUTE,
+        "characteristics": [
+            {"name": "dyno"},
+        ],
+        "video_id": 1,
+        "gym_name": CHANGED_GYM_NAME,
+    }
+    assert res.json() == [test_route]
 
 
 def test_get_routes():

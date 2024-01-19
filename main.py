@@ -2,9 +2,21 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+import os
+from datetime import datetime
 from typing import Annotated, Union
-from fastapi import Depends, FastAPI, HTTPException, status, Query
+from fastapi import (
+    Depends,
+    FastAPI,
+    HTTPException,
+    status,
+    Query,
+    File,
+    UploadFile,
+    Form,
+)
 from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import (
     Session,
 )
@@ -19,10 +31,24 @@ from auth import (
     get_password_hash,
 )
 from models.base import Token, StatusDetail, User, Characteristic, Route
-from models.db import Base, UserItem, RouteItem, CharacteristicItem
+from models.db import Base, UserItem, RouteItem, CharacteristicItem, VideoItem
 from validators import is_at_least_8_chars, has_uppercase, has_lowercase, has_one_digit
-from constants import PASSWORD_REQUIREMENTS, ACCESS_TOKEN_EXP_MINUTES
-from utils.characteristics import get_new_characteristics, to_characteristics_list
+from constants import (
+    PASSWORD_REQUIREMENTS,
+    ACCESS_TOKEN_EXP_MINUTES,
+    ROUTE_NOT_FOUND,
+    INTERNAL_SERVER_ERROR,
+    VIDEOS_DIR,
+    WRITE_BINARY,
+    UNAUTHORIZED,
+    SUCCESS,
+)
+from utils.main import (
+    iterfile,
+    generate_file_name,
+    to_characteristics_list,
+    get_new_characteristics,
+)
 
 
 app = FastAPI()
@@ -106,46 +132,110 @@ async def register_user(
 
 @app.post("/routes", response_model=StatusDetail)
 async def create_route(
-    route: Route,
+    gym_name: str = Form(""),
+    date: datetime = Form(datetime.now()),
+    difficulty: str = Form(""),
+    characteristics: list[str] = Form(),
+    attempts: int = Form(ge=0),
+    sent: bool = Form(False),
+    notes: str = Form(""),
+    upload_file: UploadFile = File(...),
     current_user: UserItem = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
     try:
-        # we convert Characteristic objects to an array of strings
-        # route_characteristics_names has to be an array of strings for the filter to work
-        # filter will not work with route.characteristics, which is Characteristic class
-        # don't change the type of Characteristic, because it is needed in read_own_items
-        new_characteristics = get_new_characteristics(route.characteristics, db)
+        c_list = to_characteristics_list(characteristics)
+        new_characteristics = get_new_characteristics(c_list, db)
         db.add_all(new_characteristics)
         db.commit()
-        # re-query is needed because the characteristics might not exist before this point in time
         route_characteristics = (
             db.query(CharacteristicItem)
-            .filter(
-                CharacteristicItem.name.in_(
-                    to_characteristics_list(route.characteristics)
-                )
-            )
+            .filter(CharacteristicItem.name.in_(c_list))
             .all()
         )
-        route_dict = {
-            key: value
-            for key, value in route.__dict__.items()
-            if key != "characteristics"
-        }
         route_item = RouteItem(
-            **route_dict, user_id=current_user.id, characteristics=route_characteristics
+            user_id=current_user.id,
+            gym_name=gym_name,
+            date=date,
+            difficulty=difficulty,
+            characteristics=route_characteristics,
+            attempts=attempts,
+            sent=sent,
+            notes=notes,
         )
         db.add(route_item)
         db.commit()
         db.refresh(route_item)
-        return StatusDetail(status_code=status.HTTP_200_OK, detail="Success")
-    except HTTPException as http_exc:
-        raise http_exc
-    except Exception:
+        route_id = route_item.id
+        video_id = upload_route_video(route_id, upload_file, db)
+        if not video_id:
+            db.rollback()
+            return StatusDetail(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=INTERNAL_SERVER_ERROR,
+            )
+        route_item.video_id = video_id
+        db.commit()
+        return StatusDetail(status_code=status.HTTP_200_OK, detail=SUCCESS)
+    except HTTPException:
+        db.rollback()
         return StatusDetail(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error",
+            detail=INTERNAL_SERVER_ERROR,
+        )
+    except Exception as exc:
+        db.rollback()
+        return StatusDetail(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=INTERNAL_SERVER_ERROR,
+        )
+
+
+def upload_route_video(
+    route_id: int,
+    upload_file: UploadFile,
+    db: Session = Depends(get_db),
+):
+    try:
+        if not os.path.exists(VIDEOS_DIR):
+            os.mkdir(VIDEOS_DIR)
+        contents = upload_file.file.read()
+        dir_path = os.getcwd() + f"/{VIDEOS_DIR}/"
+        filename = (
+            dir_path + generate_file_name(upload_file.filename)
+            if upload_file.filename
+            else dir_path + generate_file_name()
+        )
+        with open(filename, WRITE_BINARY) as f:
+            f.write(contents)
+        upload_file.file.close()
+        video_item = VideoItem(filename=filename, route_id=route_id)
+        db.add(video_item)
+        db.commit()
+        return video_item.id
+    except Exception:
+        db.rollback()
+
+
+@app.get("/routes/{route_id}/video")
+def stream_video(route_id: int, db: Session = Depends(get_db)):
+    route_item = db.query(RouteItem).filter(RouteItem.id == route_id).first()
+    if not route_item:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=ROUTE_NOT_FOUND
+        )
+    video_item = db.query(VideoItem).filter(VideoItem.id == route_item.video_id).first()
+    if not video_item:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=ROUTE_NOT_FOUND
+        )
+    try:
+        return StreamingResponse(iterfile(video_item.filename), media_type="video/mp4")
+    except Exception as exc:
+        print(exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=INTERNAL_SERVER_ERROR,
         )
 
 
@@ -163,13 +253,11 @@ async def delete_route_by_id(
     route = db.query(RouteItem).filter(RouteItem.id == route_id).first()
     if not route:
         return StatusDetail(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Route not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail=ROUTE_NOT_FOUND
         )
     user = db.query(UserItem).filter(UserItem.id == current_user.id).first()
     if user and route.user_id != user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=UNAUTHORIZED)
     db.delete(route)
     db.commit()
     return StatusDetail(status_code=200, detail=f"Route {route_id} deleted")
@@ -177,8 +265,14 @@ async def delete_route_by_id(
 
 @app.put("/routes/{route_id}", response_model=StatusDetail)
 async def edit_route_by_id(
-    route: Route,
     route_id: int,
+    gym_name: str = Form(""),
+    date: datetime = Form(datetime.now()),
+    difficulty: str = Form(""),
+    characteristics: list[str] = Form(),
+    attempts: int = Form(ge=0),
+    sent: bool = Form(False),
+    notes: str = Form(""),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
@@ -189,27 +283,37 @@ async def edit_route_by_id(
         )
     if to_update.user_id != current_user.id:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized"
+            status_code=status.HTTP_401_UNAUTHORIZED, detail=UNAUTHORIZED
         )
-    for attr_name, new_val in route.__dict__.items():
-        if attr_name in to_update.__dict__:
-            setattr(to_update, attr_name, new_val)
-        elif attr_name == "characteristics":
-            new_characteristics = get_new_characteristics(route.characteristics, db)
-            db.add_all(new_characteristics)
-            db.commit()
-            route_characteristics = (
-                db.query(CharacteristicItem)
-                .filter(
-                    CharacteristicItem.name.in_(
-                        to_characteristics_list(route.characteristics)
-                    )
-                )
-                .all()
-            )
-            to_update.characteristics = route_characteristics
-    db.commit()
-    return StatusDetail(status_code=200, detail="Success")
+    try:
+        c_list = to_characteristics_list(characteristics)
+        new_characteristics = get_new_characteristics(c_list, db)
+        db.add_all(new_characteristics)
+        db.commit()
+        route_characteristics = (
+            db.query(CharacteristicItem)
+            .filter(CharacteristicItem.name.in_(c_list))
+            .all()
+        )
+        route = Route(
+            gym_name=gym_name,
+            date=date,
+            difficulty=difficulty,
+            characteristics=[],
+            attempts=attempts,
+            sent=sent,
+            notes=notes,
+            video_id=to_update.video_id,
+        )
+        for attr_name, new_val in route.__dict__.items():
+            if attr_name in to_update.__dict__:
+                setattr(to_update, attr_name, new_val)
+            elif attr_name == "characteristics":
+                to_update.characteristics = route_characteristics
+        db.commit()
+        return StatusDetail(status_code=200, detail=SUCCESS)
+    except:
+        db.rollback()
 
 
 @app.get("/routes/{characteristic}", response_model=list[Route])
@@ -241,11 +345,11 @@ async def create_characteristic(
             status_code=status.HTTP_204_NO_CONTENT,
             detail="Item already exists",
         )
-    characteristic_item = CharacteristicItem(name=name)
+    characteristic_item = CharacteristicItem(name=name.strip())
     db.add(characteristic_item)
     db.commit()
     db.refresh(characteristic_item)
-    return StatusDetail(status_code=200, detail="Success")
+    return StatusDetail(status_code=200, detail=SUCCESS)
 
 
 @app.get("/characteristics", response_model=list[Characteristic])

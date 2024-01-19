@@ -53,6 +53,15 @@ class RouteItem(Base):
     attempts: Mapped[int] = mapped_column(Integer)
     sent: Mapped[bool] = mapped_column(Boolean)
     notes: Mapped[str] = mapped_column(Text)
+    video_id: Mapped[int] = mapped_column(ForeignKey("videos.id"), nullable=True)
+
+
+class VideoItem(Base):
+    __tablename__ = "videos"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    filename: Mapped[str] = mapped_column(String())
+    route_id: Mapped[int] = mapped_column(ForeignKey("routes.id"), nullable=True)
 
 
 class CharacteristicItem(Base):

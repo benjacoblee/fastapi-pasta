@@ -34,3 +34,4 @@ class Route(BaseModel):
     attempts: int
     sent: bool
     notes: str
+    video_id: int

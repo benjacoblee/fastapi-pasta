@@ -2,3 +2,4 @@ __pycache__
 fake_db.py
 .env
 test.db
+videos
