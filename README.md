@@ -9,4 +9,9 @@ docker run -p 8080:8080 <project-name>
 
 - [ ] Route form validation
 - [ ] Characteristic creation validation
-- [ ] Video compression
+- [x] Video compression
+- [ ] Generate thumbnail
+
+## External dependencies
+
+- `ffmpeg`

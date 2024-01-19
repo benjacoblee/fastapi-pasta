@@ -14,6 +14,7 @@ from fastapi import (
     File,
     UploadFile,
     Form,
+    BackgroundTasks,
 )
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.responses import StreamingResponse
@@ -48,7 +49,9 @@ from utils.main import (
     generate_file_name,
     to_characteristics_list,
     get_new_characteristics,
+    generate_file_path,
 )
+from services.video import add_compress_task
 
 
 app = FastAPI()
@@ -132,6 +135,7 @@ async def register_user(
 
 @app.post("/routes", response_model=StatusDetail)
 async def create_route(
+    background_tasks: BackgroundTasks,
     gym_name: str = Form(""),
     date: datetime = Form(datetime.now()),
     difficulty: str = Form(""),
@@ -167,7 +171,7 @@ async def create_route(
         db.commit()
         db.refresh(route_item)
         route_id = route_item.id
-        video_id = upload_route_video(route_id, upload_file, db)
+        video_id = upload_route_video(route_id, upload_file, background_tasks, db)
         if not video_id:
             db.rollback()
             return StatusDetail(
@@ -194,22 +198,25 @@ async def create_route(
 def upload_route_video(
     route_id: int,
     upload_file: UploadFile,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
     try:
         if not os.path.exists(VIDEOS_DIR):
             os.mkdir(VIDEOS_DIR)
         contents = upload_file.file.read()
-        dir_path = os.getcwd() + f"/{VIDEOS_DIR}/"
-        filename = (
-            dir_path + generate_file_name(upload_file.filename)
-            if upload_file.filename
-            else dir_path + generate_file_name()
-        )
-        with open(filename, WRITE_BINARY) as f:
+        # generate file path with UUID here to prevent file name collision
+        file_path = generate_file_path(upload_file.filename or generate_file_name())
+        with open(file_path, WRITE_BINARY) as f:
             f.write(contents)
         upload_file.file.close()
-        video_item = VideoItem(filename=filename, route_id=route_id)
+        # old file is deleted, new_file_path is output dest for compressed file
+        # we return out of the function before compression is completed
+        new_file_path = generate_file_path(upload_file.filename or generate_file_name())
+        add_compress_task(file_path, new_file_path, background_tasks, db)
+        video_item = VideoItem(
+            filename=new_file_path, route_id=route_id, failed=False, completed=False
+        )
         db.add(video_item)
         db.commit()
         return video_item.id
