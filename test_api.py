@@ -4,6 +4,7 @@ from sqlalchemy import create_engine, StaticPool
 from sqlalchemy.orm import sessionmaker
 from main import app, get_db, Base
 from models.db import UserItem
+from constants import SUCCESS
 
 DATABASE_URL = "sqlite:///:memory:"
 TEST_PASSWORD = os.getenv("TEST_PASSWORD")
@@ -15,7 +16,7 @@ ACCESS_TOKEN = "access_token"
 TOKEN_TYPE = "token_type"
 DETAIL = "detail"
 TEST_ROUTE = {
-    "gym_name": "test_gym",
+    "gym_name": "test gym",
     "date": "2024-01-18T00:00:00",
     "difficulty": "string",
     "characteristics": ["dyno"],
@@ -23,7 +24,7 @@ TEST_ROUTE = {
     "sent": True,
     "notes": "string",
 }
-CHANGED_GYM_NAME = "changed_test_gym"
+CHANGED_GYM_NAME = "changed test gym"
 
 
 engine = create_engine(
@@ -102,6 +103,14 @@ def test_get_own_items():
     assert len(res.json()) == 0
 
 
+def test_get_user_items_by_id():
+    token_res = post_token_res()
+    token = get_token(token_res)
+    res = client.get("/users/1/items", headers=construct_headers(token))
+    assert res.status_code == 200
+    assert len(res.json()) == 0
+
+
 def test_register_invalid_body():
     username = "short"
     password = ""
@@ -141,9 +150,9 @@ def test_post_routes_authorized():
         "/routes",
         headers=construct_headers(token),
         data=TEST_ROUTE,
-        files={"upload_file": open("videos/Untitled.jpeg", "rb")},
+        files={"upload_file": open("videos/test.mp4", "rb")},
     )
-    assert res.json() == {"status_code": 200, "detail": "Success"}
+    assert res.json() == {"status_code": 200, "detail": SUCCESS}
 
 
 def test_put_routes_authorized():
@@ -157,7 +166,7 @@ def test_put_routes_authorized():
             "gym_name": CHANGED_GYM_NAME,
         },
     )
-    assert res.json() == {"status_code": 200, "detail": "Success"}
+    assert res.json() == {"status_code": 200, "detail": SUCCESS}
 
 
 def test_stream_video_with_valid_id():
@@ -168,6 +177,13 @@ def test_stream_video_with_valid_id():
 def test_stream_video_with_invalid_id():
     res = client.get("/routes/2/video")
     assert res.status_code == 400
+
+
+def test_get_routes():
+    res = client.get("/routes")
+    assert res.status_code == 200
+    items = res.json()
+    assert len(items) == 1
 
 
 def test_get_routes_by_characteristic():
@@ -183,13 +199,6 @@ def test_get_routes_by_characteristic():
     assert res.json() == [test_route]
 
 
-def test_get_routes():
-    res = client.get("/routes")
-    assert res.status_code == 200
-    items = res.json()
-    assert len(items) == 1
-
-
 def test_delete_route():
     token_res = post_token_res()
     token = get_token(token_res)
@@ -197,3 +206,19 @@ def test_delete_route():
     res_json = res.json()
     assert res.status_code == 200
     assert res_json[DETAIL] == "Route 1 deleted"
+
+
+def test_post_characteristic():
+    token_res = post_token_res()
+    token = get_token(token_res)
+    res = client.post(
+        "/characteristics?name=undercling", headers=construct_headers(token)
+    )
+    assert res.json() == {"detail": SUCCESS, "status_code": 200}
+
+
+def test_get_characteristics():
+    res = client.get("/characteristics")
+    res_json = res.json()
+    assert res.status_code == 200
+    assert len(res_json) == 2

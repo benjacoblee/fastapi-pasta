@@ -7,8 +7,8 @@ docker run -p 8080:8080 <project-name>
 
 ## Todo
 
-- [ ] Route form validation
-- [ ] Characteristic creation validation
+- [x] Route form validation
+- [x] Characteristic creation validation
 - [x] Video compression
 - [ ] Generate thumbnail
 

@@ -43,6 +43,9 @@ from constants import (
     WRITE_BINARY,
     UNAUTHORIZED,
     SUCCESS,
+    GENERAL_STR_REGEX,
+    DIFFICULTY_REGEX,
+    CHARACTERISTIC_STR,
 )
 from utils.main import (
     iterfile,
@@ -136,10 +139,10 @@ async def register_user(
 @app.post("/routes", response_model=StatusDetail)
 async def create_route(
     background_tasks: BackgroundTasks,
-    gym_name: str = Form(""),
+    gym_name: str = Form(pattern=GENERAL_STR_REGEX),
     date: datetime = Form(datetime.now()),
-    difficulty: str = Form(""),
-    characteristics: list[str] = Form(),
+    difficulty: str = Form(pattern=DIFFICULTY_REGEX),
+    characteristics: list[CHARACTERISTIC_STR] = Form(),  # type: ignore
     attempts: int = Form(ge=0),
     sent: bool = Form(False),
     notes: str = Form(""),
@@ -239,7 +242,6 @@ def stream_video(route_id: int, db: Session = Depends(get_db)):
     try:
         return StreamingResponse(iterfile(video_item.filename), media_type="video/mp4")
     except Exception as exc:
-        print(exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=INTERNAL_SERVER_ERROR,
@@ -273,10 +275,10 @@ async def delete_route_by_id(
 @app.put("/routes/{route_id}", response_model=StatusDetail)
 async def edit_route_by_id(
     route_id: int,
-    gym_name: str = Form(""),
+    gym_name: str = Form(pattern=GENERAL_STR_REGEX),
     date: datetime = Form(datetime.now()),
-    difficulty: str = Form(""),
-    characteristics: list[str] = Form(),
+    difficulty: str = Form(pattern=DIFFICULTY_REGEX),
+    characteristics: list[CHARACTERISTIC_STR] = Form(),  # type: ignore
     attempts: int = Form(ge=0),
     sent: bool = Form(False),
     notes: str = Form(""),
@@ -338,7 +340,7 @@ async def get_routes_by_characteristic(
 
 @app.post("/characteristics", response_model=StatusDetail)
 async def create_characteristic(
-    name: str,
+    name: Annotated[str, Query(pattern=GENERAL_STR_REGEX)],
     _: User = Depends(
         get_current_active_user
     ),  # we don't use the variable but user needs to be logged in to create a characteristic
