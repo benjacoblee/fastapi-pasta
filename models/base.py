@@ -1,5 +1,11 @@
-from pydantic import BaseModel
+from pydantic import BaseModel as PydanticBaseModel
 from datetime import datetime
+from fastapi import WebSocket
+
+
+class BaseModel(PydanticBaseModel):
+    class Config:
+        arbitrary_types_allowed = True
 
 
 class Token(BaseModel):
@@ -35,3 +41,32 @@ class Route(BaseModel):
     sent: bool
     notes: str
     video_id: int
+
+
+class Job(BaseModel):
+    user_id: int
+    video_id: int
+    completed: bool
+
+
+class ActiveConnection(BaseModel):
+    user_id: int
+    websocket: WebSocket
+
+    async def send_text(self, text: str):
+        await self.websocket.send_text(text)
+
+
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: list[ActiveConnection] = []
+
+    async def connect(
+        self,
+        active_connection: ActiveConnection,
+    ):
+        await active_connection.websocket.accept()
+        self.active_connections.append(active_connection)
+
+    def disconnect(self, active_connection: ActiveConnection):
+        self.active_connections.remove(active_connection)

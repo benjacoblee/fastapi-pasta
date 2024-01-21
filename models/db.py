@@ -62,8 +62,6 @@ class VideoItem(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     filename: Mapped[str] = mapped_column(String())
     route_id: Mapped[int] = mapped_column(ForeignKey("routes.id"), nullable=True)
-    completed: Mapped[bool] = mapped_column(Boolean(False))
-    failed: Mapped[bool] = mapped_column(Boolean(False))
 
 
 class CharacteristicItem(Base):

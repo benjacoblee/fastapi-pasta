@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import os
+import asyncio
 from datetime import datetime
 from typing import Annotated, Union
 from fastapi import (
@@ -15,6 +16,8 @@ from fastapi import (
     UploadFile,
     Form,
     BackgroundTasks,
+    WebSocket,
+    WebSocketDisconnect,
 )
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.responses import StreamingResponse
@@ -31,7 +34,16 @@ from auth import (
     get_user,
     get_password_hash,
 )
-from models.base import Token, StatusDetail, User, Characteristic, Route
+from models.base import (
+    Token,
+    StatusDetail,
+    User,
+    Characteristic,
+    Route,
+    Job,
+    ConnectionManager,
+    ActiveConnection,
+)
 from models.db import Base, UserItem, RouteItem, CharacteristicItem, VideoItem
 from validators import is_at_least_8_chars, has_uppercase, has_lowercase, has_one_digit
 from constants import (
@@ -58,6 +70,8 @@ from services.video import add_compress_task
 
 
 app = FastAPI()
+manager = ConnectionManager()
+jobs: list[Job] = []
 
 
 @app.on_event("startup")
@@ -174,7 +188,9 @@ async def create_route(
         db.commit()
         db.refresh(route_item)
         route_id = route_item.id
-        video_id = upload_route_video(route_id, upload_file, background_tasks, db)
+        video_id = upload_route_video(
+            route_id, current_user.id, upload_file, background_tasks, jobs, db
+        )
         if not video_id:
             db.rollback()
             return StatusDetail(
@@ -200,8 +216,10 @@ async def create_route(
 
 def upload_route_video(
     route_id: int,
+    user_id: int,
     upload_file: UploadFile,
     background_tasks: BackgroundTasks,
+    jobs: list[Job],
     db: Session = Depends(get_db),
 ):
     try:
@@ -216,12 +234,11 @@ def upload_route_video(
         # old file is deleted, new_file_path is output dest for compressed file
         # we return out of the function before compression is completed
         new_file_path = generate_file_path(upload_file.filename or generate_file_name())
-        add_compress_task(file_path, new_file_path, background_tasks, db)
-        video_item = VideoItem(
-            filename=new_file_path, route_id=route_id, failed=False, completed=False
-        )
+        video_item = VideoItem(filename=new_file_path, route_id=route_id)
         db.add(video_item)
         db.commit()
+        jobs.append(Job(user_id=user_id, video_id=video_item.id, completed=False))
+        add_compress_task(file_path, new_file_path, background_tasks, jobs, db)
         return video_item.id
     except Exception:
         db.rollback()
@@ -354,7 +371,7 @@ async def create_characteristic(
             status_code=status.HTTP_204_NO_CONTENT,
             detail="Item already exists",
         )
-    characteristic_item = CharacteristicItem(name=name.strip())
+    characteristic_item = CharacteristicItem(name=name)
     db.add(characteristic_item)
     db.commit()
     db.refresh(characteristic_item)
@@ -364,3 +381,32 @@ async def create_characteristic(
 @app.get("/characteristics", response_model=list[Characteristic])
 async def get_characteristics(db=Depends(get_db)):
     return db.query(CharacteristicItem).all()
+
+
+@app.websocket("/video-job-status/{user_id}")
+async def ws_endpoint(user_id: int, websocket: WebSocket):
+    existing_connection = next(
+        (conn for conn in manager.active_connections if conn.user_id == user_id), None
+    )
+    if existing_connection:
+        manager.disconnect(existing_connection)
+    active_connection = ActiveConnection(user_id=user_id, websocket=websocket)
+    await manager.connect(active_connection)
+    try:
+        while True:
+            if jobs:
+                for job in jobs:
+                    for connection in manager.active_connections:
+                        if job.user_id == connection.user_id:
+                            if job.completed:
+                                await connection.send_text(
+                                    f"{job.video_id} finished processing"
+                                )
+                                jobs.remove(job)
+                                print(jobs)
+            await asyncio.sleep(5)
+    except WebSocketDisconnect as exc:
+        print(exc)
+        manager.disconnect(active_connection)
+    except asyncio.CancelledError:
+        pass
