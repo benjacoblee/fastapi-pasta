@@ -10,7 +10,6 @@ from fastapi import (
     Depends,
     FastAPI,
     HTTPException,
-    status,
     Query,
     File,
     UploadFile,
@@ -18,6 +17,7 @@ from fastapi import (
     BackgroundTasks,
     WebSocket,
     WebSocketDisconnect,
+    status,
 )
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.responses import StreamingResponse
@@ -394,19 +394,16 @@ async def ws_endpoint(user_id: int, websocket: WebSocket):
     await manager.connect(active_connection)
     try:
         while True:
-            if jobs:
-                for job in jobs:
-                    for connection in manager.active_connections:
-                        if job.user_id == connection.user_id:
-                            if job.completed:
-                                await connection.send_text(
-                                    f"{job.video_id} finished processing"
-                                )
-                                jobs.remove(job)
-                                print(jobs)
+            for job in jobs:
+                for connection in manager.active_connections:
+                    if job.user_id == connection.user_id and job.completed:
+                        await connection.send_text(
+                            f"{job.video_id} finished processing"
+                        )
+                        jobs.remove(job)
+                        print(jobs)
             await asyncio.sleep(5)
     except WebSocketDisconnect as exc:
-        print(exc)
         manager.disconnect(active_connection)
     except asyncio.CancelledError:
         pass
