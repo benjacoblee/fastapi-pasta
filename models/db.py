@@ -74,3 +74,14 @@ class CharacteristicItem(Base):
         secondary=route_characteristic_association,
         overlaps="characteristics",
     )
+
+
+class JobItem(Base):
+    __tablename__ = "jobs"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    created_at: Mapped[str] = mapped_column(Date)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    video_id: Mapped[int] = mapped_column(ForeignKey("videos.id"))
+    route_id: Mapped[int] = mapped_column(ForeignKey("routes.id"))
+    completed: Mapped[bool] = mapped_column(Boolean)

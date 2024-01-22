@@ -44,7 +44,7 @@ from models.base import (
     ConnectionManager,
     ActiveConnection,
 )
-from models.db import Base, UserItem, RouteItem, CharacteristicItem, VideoItem
+from models.db import Base, UserItem, RouteItem, CharacteristicItem, VideoItem, JobItem
 from validators import is_at_least_8_chars, has_uppercase, has_lowercase, has_one_digit
 from constants import (
     PASSWORD_REQUIREMENTS,
@@ -237,7 +237,14 @@ def upload_route_video(
         video_item = VideoItem(filename=new_file_path, route_id=route_id)
         db.add(video_item)
         db.commit()
-        jobs.append(Job(user_id=user_id, video_id=video_item.id, completed=False))
+        jobs.append(
+            Job(
+                user_id=user_id,
+                video_id=video_item.id,
+                route_id=route_id,
+                completed=False,
+            )
+        )
         add_compress_task(file_path, new_file_path, background_tasks, jobs, db)
         return video_item.id
     except Exception:
@@ -384,7 +391,9 @@ async def get_characteristics(db=Depends(get_db)):
 
 
 @app.websocket("/video-job-status/{user_id}")
-async def ws_endpoint(user_id: int, websocket: WebSocket):
+async def ws_endpoint(
+    user_id: int, websocket: WebSocket, db: Session = Depends(get_db)
+):
     existing_connection = next(
         (conn for conn in manager.active_connections if conn.user_id == user_id), None
     )
@@ -400,10 +409,26 @@ async def ws_endpoint(user_id: int, websocket: WebSocket):
                         await connection.send_text(
                             f"{job.video_id} finished processing"
                         )
+                        job_item = JobItem(
+                            created_at=datetime.now(),
+                            user_id=user_id,
+                            video_id=job.video_id,
+                            route_id=job.route_id,
+                            completed=True,
+                        )
+                        db.add(job_item)
+                        db.commit()
                         jobs.remove(job)
                         print(jobs)
             await asyncio.sleep(5)
-    except WebSocketDisconnect as exc:
+    except WebSocketDisconnect:
         manager.disconnect(active_connection)
     except asyncio.CancelledError:
         pass
+
+
+@app.get("/users/{user_id}/jobs", response_model=list[Job])
+async def get_user_job_history(
+    current_user: User = Depends(get_current_active_user), db: Session = Depends(get_db)
+):
+    return db.query(JobItem).filter(JobItem.user_id == current_user.id).all()

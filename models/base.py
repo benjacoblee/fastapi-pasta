@@ -46,6 +46,7 @@ class Route(BaseModel):
 class Job(BaseModel):
     user_id: int
     video_id: int
+    route_id: int
     completed: bool
 
 
