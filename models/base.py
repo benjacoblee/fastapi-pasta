@@ -8,9 +8,13 @@ class BaseModel(PydanticBaseModel):
         arbitrary_types_allowed = True
 
 
-class Token(BaseModel):
+class AccessToken(BaseModel):
     access_token: str
     token_type: str
+
+
+class Token(AccessToken):
+    refresh_token: str
 
 
 class StatusDetail(BaseModel):

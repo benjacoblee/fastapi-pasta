@@ -2,9 +2,13 @@ import os
 from pydantic import constr
 
 ACCESS_TOKEN_EXP_MINUTES = os.getenv("ACCESS_TOKEN_EXP_MINUTES") or 30
+REFRESH_TOKEN_EXP_DAYS = 30
 DATABASE_URL = os.getenv("DATABASE_URL") or "sqlite:///test.db"
 SECRET_KEY = os.getenv("SECRET_KEY") or ""
+REFRESH_SECRET_KEY = os.getenv("REFRESH_SECRET_KEY") or ""
 ALGORITHM = os.getenv("ALGORITHM") or "HS256"
+ACCESS = "ACCESS"
+REFRESH = "REFRESH"
 
 # Desc
 PASSWORD_REQUIREMENTS = """

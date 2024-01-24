@@ -26,16 +26,19 @@ from sqlalchemy.orm import (
 )
 from pydantic.functional_validators import AfterValidator
 from datetime import timedelta
+from jose import jwt, ExpiredSignatureError, JWTError
 from db import engine, get_db
 from auth import (
     get_current_active_user,
     auth_user,
-    create_access_token,
+    create_token,
     get_user,
     get_password_hash,
+    get_current_user,
 )
 from models.base import (
     Token,
+    AccessToken,
     StatusDetail,
     User,
     Characteristic,
@@ -49,6 +52,7 @@ from validators import is_at_least_8_chars, has_uppercase, has_lowercase, has_on
 from constants import (
     PASSWORD_REQUIREMENTS,
     ACCESS_TOKEN_EXP_MINUTES,
+    REFRESH_TOKEN_EXP_DAYS,
     ROUTE_NOT_FOUND,
     INTERNAL_SERVER_ERROR,
     VIDEOS_DIR,
@@ -58,6 +62,10 @@ from constants import (
     GENERAL_STR_REGEX,
     DIFFICULTY_REGEX,
     CHARACTERISTIC_STR,
+    REFRESH_SECRET_KEY,
+    ALGORITHM,
+    REFRESH,
+    ACCESS,
 )
 from utils.main import (
     iterfile,
@@ -96,10 +104,47 @@ async def login_for_access_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
     access_token_expires = timedelta(minutes=float(ACCESS_TOKEN_EXP_MINUTES))
-    access_token = create_access_token(
-        data={"sub": user.username}, expires_delta=access_token_expires
+    refresh_token_expires = timedelta(days=float(REFRESH_TOKEN_EXP_DAYS))
+    access_token = create_token(
+        ACCESS, data={"sub": user.username}, expires_delta=access_token_expires
     )
-    return {"access_token": access_token, "token_type": "bearer"}
+    refresh_token = create_token(
+        REFRESH, data={"sub": user.username}, expires_delta=refresh_token_expires
+    )
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+    }
+
+
+@app.post("/refresh", response_model=AccessToken)
+async def refresh_access_token(refresh_token: str, db: Session = Depends(get_db)):
+    try:
+        payload = jwt.decode(refresh_token, REFRESH_SECRET_KEY, algorithms=[ALGORITHM])
+        username = payload["sub"]
+        user = db.query(UserItem).filter(UserItem.username == username).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Could not validate credentials",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        access_token_expires = timedelta(minutes=float(ACCESS_TOKEN_EXP_MINUTES))
+        access_token = create_token(
+            ACCESS, data={"sub": username}, expires_delta=access_token_expires
+        )
+        return {"access_token": access_token, "token_type": "bearer"}
+    except ExpiredSignatureError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token expired",
+        )
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid refresh token",
+        )
 
 
 @app.get("/users/me", response_model=User)
@@ -390,10 +435,13 @@ async def get_characteristics(db=Depends(get_db)):
     return db.query(CharacteristicItem).all()
 
 
-@app.websocket("/video-job-status/{user_id}")
-async def ws_endpoint(
-    user_id: int, websocket: WebSocket, db: Session = Depends(get_db)
-):
+@app.websocket("/video-job-status/token/{token}")
+async def ws_endpoint(token: str, websocket: WebSocket, db: Session = Depends(get_db)):
+    user = await get_current_user(token, db)
+    assert (
+        user is not None
+    )  # get_current_user will raise exceptions if the token is invalid or expired, in which case frontend needs to revalidate token
+    user_id = user.id
     existing_connection = next(
         (conn for conn in manager.active_connections if conn.user_id == user_id), None
     )

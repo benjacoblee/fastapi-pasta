@@ -13,6 +13,7 @@ HASHED_PASSWORD = os.getenv("TEST_HASH_PASSWORD")
 USERNAME = "username"
 BEARER = "bearer"
 ACCESS_TOKEN = "access_token"
+REFRESH_TOKEN = "refresh_token"
 TOKEN_TYPE = "token_type"
 DETAIL = "detail"
 TEST_ROUTE = {
@@ -75,6 +76,11 @@ def get_token(res):
     return res_json[ACCESS_TOKEN]
 
 
+def get_refresh_token(res):
+    res_json = res.json()
+    return res_json[REFRESH_TOKEN]
+
+
 def construct_headers(token: str):
     return {"Authorization": f"Bearer {token}"}
 
@@ -85,6 +91,16 @@ def test_post_token():
     res_json = res.json()
     assert len(res_json[ACCESS_TOKEN])
     assert res_json[TOKEN_TYPE] == BEARER
+
+
+def test_post_refresh_token():
+    token_res = post_token_res()
+    refresh_token = get_refresh_token(token_res)
+    res = client.post(f"/refresh?refresh_token={refresh_token}")
+    res_json = res.json()
+    assert res.status_code == 200
+    assert res_json["access_token"]
+    assert res_json["refresH"]
 
 
 def test_get_me():

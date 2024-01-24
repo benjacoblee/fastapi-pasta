@@ -1,4 +1,3 @@
-import os
 from datetime import datetime, timedelta
 from fastapi import HTTPException, Depends, status
 from fastapi.security import OAuth2PasswordBearer
@@ -8,7 +7,7 @@ from passlib.context import CryptContext
 from db import get_db
 from models.base import UserHash
 from models.db import UserItem
-from constants import SECRET_KEY, ALGORITHM
+from constants import SECRET_KEY, REFRESH_SECRET_KEY, ALGORITHM, ACCESS
 
 
 if not SECRET_KEY:
@@ -43,15 +42,17 @@ async def auth_user(username: str, password: str, db: Session):
     return user
 
 
-def create_access_token(data: dict, expires_delta: timedelta | None = None):
+def create_token(type: str, data: dict, expires_delta: timedelta | None = None):
     to_encode = data.copy()
-    expire = (
-        datetime.utcnow() + expires_delta
-        if expires_delta
-        else datetime.utcnow() + timedelta(minutes=15)
+    key = SECRET_KEY if type == ACCESS else REFRESH_SECRET_KEY
+    default_exp_delta = (
+        datetime.utcnow() + timedelta(minutes=15)
+        if type == ACCESS
+        else datetime.utcnow() + timedelta(days=15)
     )
+    expire = datetime.utcnow() + expires_delta if expires_delta else default_exp_delta
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    encoded_jwt = jwt.encode(to_encode, key, algorithm=ALGORITHM)
     return encoded_jwt
 
 
