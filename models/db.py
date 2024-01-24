@@ -85,3 +85,11 @@ class JobItem(Base):
     video_id: Mapped[int] = mapped_column(ForeignKey("videos.id"))
     route_id: Mapped[int] = mapped_column(ForeignKey("routes.id"))
     completed: Mapped[bool] = mapped_column(Boolean)
+
+
+class RevokedTokenItem(Base):
+    __tablename__ = "revoked_tokens"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    token: Mapped[str] = mapped_column(String, unique=True)
+    revoked_at: Mapped[str] = mapped_column(Date)

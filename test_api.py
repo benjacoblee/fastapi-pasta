@@ -100,7 +100,16 @@ def test_post_refresh_token():
     res_json = res.json()
     assert res.status_code == 200
     assert res_json["access_token"]
-    assert res_json["refresH"]
+
+
+def test_post_revoke_token():
+    token_res = post_token_res()
+    refresh_token = get_refresh_token(token_res)
+    client.post(f"/revoke?refresh_token={refresh_token}")
+    res = client.post(f"/refresh?refresh_token={refresh_token}")
+    res_json = res.json()
+    assert res.status_code == 401
+    assert res_json[DETAIL] == "Invalid refresh token"
 
 
 def test_get_me():

@@ -47,7 +47,15 @@ from models.base import (
     ConnectionManager,
     ActiveConnection,
 )
-from models.db import Base, UserItem, RouteItem, CharacteristicItem, VideoItem, JobItem
+from models.db import (
+    Base,
+    UserItem,
+    RouteItem,
+    CharacteristicItem,
+    VideoItem,
+    JobItem,
+    RevokedTokenItem,
+)
 from validators import is_at_least_8_chars, has_uppercase, has_lowercase, has_one_digit
 from constants import (
     PASSWORD_REQUIREMENTS,
@@ -120,7 +128,17 @@ async def login_for_access_token(
 
 @app.post("/refresh", response_model=AccessToken)
 async def refresh_access_token(refresh_token: str, db: Session = Depends(get_db)):
+    invalid_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token"
+    )
     try:
+        token_was_revoked = (
+            db.query(RevokedTokenItem)
+            .filter(RevokedTokenItem.token == refresh_token)
+            .first()
+        )
+        if token_was_revoked:
+            raise invalid_exception
         payload = jwt.decode(refresh_token, REFRESH_SECRET_KEY, algorithms=[ALGORITHM])
         username = payload["sub"]
         user = db.query(UserItem).filter(UserItem.username == username).first()
@@ -141,10 +159,21 @@ async def refresh_access_token(refresh_token: str, db: Session = Depends(get_db)
             detail="Refresh token expired",
         )
     except JWTError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid refresh token",
+        raise invalid_exception
+
+
+@app.post("/revoke")
+async def revoke_token(refresh_token: str, db: Session = Depends(get_db)):
+    try:
+        revoked_token_item = RevokedTokenItem(
+            token=refresh_token, revoked_at=datetime.now()
         )
+        db.add(revoked_token_item)
+        db.commit()
+        return StatusDetail(status_code=200, detail=SUCCESS)
+    except Exception:
+        db.rollback()
+        return HTTPException(status_code=400, detail="Unknown error")
 
 
 @app.get("/users/me", response_model=User)
