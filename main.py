@@ -46,6 +46,7 @@ from models.base import (
     Job,
     ConnectionManager,
     ActiveConnection,
+    NewUser,
 )
 from models.db import (
     Base,
@@ -196,32 +197,36 @@ async def read_user_items(user_id: int, db: Session = Depends(get_db)):
     return db_items
 
 
-@app.post("/register", response_model=Union[User, StatusDetail])
+@app.post("/register", response_model=AccessToken)
 async def register_user(
-    username: Annotated[str, Query(min_length=6)],
-    password: Annotated[
-        str,
-        AfterValidator(is_at_least_8_chars),
-        AfterValidator(has_uppercase),
-        AfterValidator(has_lowercase),
-        AfterValidator(has_one_digit),
-        Query(
-            min_length=8,
-            description=PASSWORD_REQUIREMENTS,
-        ),
-    ],
+    username: str,
+    password: str,
     db: Session = Depends(get_db),
 ):
     # linter will sometimes complain that this is not awaitable, but it returns a coroutine object that must be awaited
     user = await get_user(username, db)
     if user:
         raise HTTPException(400, detail="Username already taken")
+    _ = NewUser(username=username, password=password)  # validator
     hashed_password = get_password_hash(password)
     db_item = UserItem(username=username, hashed_password=hashed_password)
     db.add(db_item)
     db.commit()
     db.refresh(db_item)
-    return StatusDetail(status_code=200, detail="User creation successful")
+    # TODO: reusable function for this because response for "/token" is the same
+    access_token_expires = timedelta(minutes=float(ACCESS_TOKEN_EXP_MINUTES))
+    refresh_token_expires = timedelta(days=float(REFRESH_TOKEN_EXP_DAYS))
+    access_token = create_token(
+        ACCESS, data={"sub": username}, expires_delta=access_token_expires
+    )
+    refresh_token = create_token(
+        REFRESH, data={"sub": username}, expires_delta=refresh_token_expires
+    )
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+    }
 
 
 @app.post("/routes", response_model=StatusDetail)

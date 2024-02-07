@@ -1,4 +1,5 @@
-from pydantic import BaseModel as PydanticBaseModel
+from fastapi import HTTPException
+from pydantic import BaseModel as PydanticBaseModel, validator
 from datetime import datetime
 from fastapi import WebSocket
 
@@ -25,6 +26,53 @@ class StatusDetail(BaseModel):
 class User(BaseModel):
     id: int
     username: str
+
+
+class NewUser(BaseModel):
+    username: str
+    password: str
+
+    @validator("username")
+    def is_at_least_6_chars(cls, v):
+        if not len(v) >= 6:
+            raise HTTPException(
+                status_code=400, detail="Username must be at least 6 characters"
+            )
+        return v
+
+    @validator("password")
+    def is_at_least_8_chars(cls, v):
+        if not len(v) >= 8:
+            raise HTTPException(
+                status_code=400, detail="Password must be at least 8 characters"
+            )
+        return v
+
+    @validator("password")
+    def has_uppercase(cls, v):
+        if not any(c.isupper() for c in v):
+            raise HTTPException(
+                status_code=400,
+                detail="Password must have at least one uppercase character",
+            )
+        return v
+
+    @validator("password")
+    def has_lowercase(cls, v):
+        if not any(c.islower() for c in v):
+            raise HTTPException(
+                status_code=400,
+                detail="Password must have at least one lowercase character",
+            )
+        return v
+
+    @validator("password")
+    def has_one_digit(cls, v):
+        if not any(c.isdigit() for c in v):
+            raise HTTPException(
+                status_code=400, detail="Password must have at least one digit"
+            )
+        return v
 
 
 class UserHash(User):
