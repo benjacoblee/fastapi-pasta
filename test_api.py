@@ -142,7 +142,7 @@ def test_register_invalid_body():
     res = client.post(
         f"/register?username={username}&password={password}",
     )
-    assert res.status_code == 422
+    assert res.status_code == 400
 
 
 def test_register_valid_username_invalid_pw():
@@ -151,7 +151,7 @@ def test_register_valid_username_invalid_pw():
     res = client.post(
         f"/register?username={username}&password={password}",
     )
-    assert res.status_code == 422
+    assert res.status_code == 400
 
 
 def test_register_valid():
@@ -160,7 +160,9 @@ def test_register_valid():
     res = client.post(
         f"/register?username={username}&password={password}",
     )
-    assert res.json() == {"status_code": 200, "detail": "User creation successful"}
+    res_json = res.json()
+    assert len(res_json[ACCESS_TOKEN])
+    assert res_json[TOKEN_TYPE] == BEARER
 
 
 def test_post_routes_unauthorized():
