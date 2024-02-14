@@ -34,9 +34,9 @@ class NewUser(BaseModel):
 
     @validator("username")
     def is_at_least_6_chars(cls, v):
-        if not len(v) >= 6:
+        if not len(v) >= 5:
             raise HTTPException(
-                status_code=400, detail="Username must be at least 6 characters"
+                status_code=400, detail="Username must be at least 5 characters"
             )
         return v
 
